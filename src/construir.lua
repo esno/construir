@@ -24,6 +24,22 @@ local SUCCESS = function(msg)
   _notice('\27[0;32m++\27[0m ' .. msg)
 end
 
+local install = function(path, mode)
+  local m = tonumber(mode, 8)
+  local p = path:sub(1, 1) == "/" and "/" or ""
+
+  for ent in path:gmatch("([^/]+)") do
+    p = string.format("%s%s/", p, ent)
+    f = p:sub(1, p:len() - 1)
+    if (stat(f) or { type = "-" })["type"] == "-" then
+      if mkdir(f, m) == -1 then
+        return nil, f
+      end
+    end
+  end
+  return true
+end
+
 local run = function(cmd)
   local fds = { stdin = {}, stdout = {}, stderr = {} }
   fds.stdin.read, fds.stdin.write = pipe()
@@ -60,13 +76,42 @@ local semver = function(self)
   return v(), v(), v()
 end
 
+local git_checkout = function(task)
+  local remote = task.arg.remote:gsub("(.*[/:])(.*)", "%2")
+  local gitdir = string.format("%s/git/%s", lfs.downloads, task.arg.remote:gsub("[:@/]", "_"))
+  local S = string.format("%s/%s/%s", lfs.build, task.pkg.name, remote)
+
+  MSG(string.format("\27[0;33m%s/%s\27[0m unpack \27[0;34m%s -> %s\27[0m",
+    task.pkg.name, task.pkg.version, remote, task.arg.rev))
+
+  install(S, "0755")
+  local stdout, stderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s",
+    gitdir, S, task.arg.rev))
+
+  local output = fdopen(stdout, "r"):read("a*")
+  if output ~= "" then
+    DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstdout\27[0m", task.pkg.name, task.pkg.version))
+    print(output:gsub("\n$", ""))
+  end
+  local output = fdopen(stderr, "r"):read("a*")
+  if output ~= "" then
+    DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstderr\27[0m", task.pkg.name, task.pkg.version))
+    print(output:gsub("\n$", ""))
+  end
+end
+
 local git_clone = function(task)
-  MSG(string.format("\27[0;33m%s/%s\27[0m fetch \27[0;34m%s\27[0m", task.pkg.name, task.pkg.version, task.remote))
+  MSG(string.format("\27[0;33m%s/%s\27[0m fetch \27[0;34m%s\27[0m",
+    task.pkg.name, task.pkg.version, task.arg.remote))
+
+  local remote = task.arg.remote:gsub("[:@/]", "_")
+  local gitdir = string.format("%s/git/%s", lfs.downloads, remote)
+
   local cmd
-  if stat(string.format("%s/git/%s", lfs.downloads, task.pkg.name))["type"] == "d" then
-    cmd = string.format("git --git-dir=%s/git/%s fetch origin --tags --prune --prune-tags", lfs.downloads, task.pkg.name)
+  if (stat(gitdir) or { type = "-" })["type"] == "d" then
+    cmd = string.format("git --git-dir=%s fetch origin --tags --prune --prune-tags", gitdir)
   else
-    cmd = string.format("git clone --bare --mirror %s %s/git/%s", task.remote, lfs.downloads, task.pkg.name)
+    cmd = string.format("git clone --bare --mirror %s %s", task.arg.remote, gitdir)
   end
 
   local stdout, stderr = run(cmd)
@@ -81,6 +126,13 @@ local git_clone = function(task)
     DEBUG(string.format("\27[0;33m%s/%s\27[0m print stderr\27[0m", task.pkg.name, task.pkg.version))
     print(output:gsub("\n$", ""))
   end
+end
+
+local add_task = function(tasks, name, action, task)
+  local key = string.format("%s:%s", name, action)
+  tasks[key] = tasks[key] or {}
+  table.insert(tasks[key], task)
+  return tasks
 end
 
 local parse = function(target)
@@ -113,7 +165,10 @@ local parse = function(target)
   if fenv.pkg.scm then
     for _, v in pairs(fenv.pkg.scm.git or {}) do
       DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mgit_clone %s\27[0m", fenv.pkg.name, fenv.pkg.version, v.remote))
-      table.insert(tasks, { pkg = fenv.pkg, task = git_clone, remote = v.remote })
+      add_task(tasks, fenv.pkg.name, "fetch", { pkg = fenv.pkg, task = git_clone, arg = v })
+      DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mgit_checkout %s -> %s\27[0m",
+        fenv.pkg.name, fenv.pkg.version, v.remote:gsub("(.*[/:])(.*)", "%2"), v.rev))
+      add_task(tasks, fenv.pkg.name, "unpack", { pkg = fenv.pkg, task = git_checkout, arg = v, after = { "self:fetch" } })
     end
   end
 
@@ -125,12 +180,20 @@ function main()
   dofile(string.format("%s/conf/construir.lua", lfs.root))
   lfs.recipes = lfs.recipes or string.format("%s/recipes", lfs.root)
   lfs.downloads = lfs.downloads or string.format("%s/dl", lfs.root)
+  lfs.build = lfs.build or string.format("%s/build", lfs.root)
 
   INFO("construir: a custom linux distribution of your needs")
   local target = arg[2]
   local tasks = parse(target)
 
-  for _, v in pairs(tasks or {}) do
-    v.task(v)
+  for k, queues in pairs(tasks or {}) do
+    for _, v in pairs(queues) do
+      if k:gsub("(.*):(.*)", "%2") == "fetch" then v.task(v) end
+    end
+  end
+  for k, queues in pairs(tasks or {}) do
+    for _, v in pairs(queues) do
+      if k:gsub("(.*):(.*)", "%2") == "unpack" then v.task(v) end
+    end
   end
 end
