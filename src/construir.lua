@@ -168,7 +168,8 @@ local parse = function(target)
       add_task(tasks, fenv.pkg.name, "fetch", { pkg = fenv.pkg, task = git_clone, arg = v })
       DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mgit_checkout %s -> %s\27[0m",
         fenv.pkg.name, fenv.pkg.version, v.remote:gsub("(.*[/:])(.*)", "%2"), v.rev))
-      add_task(tasks, fenv.pkg.name, "unpack", { pkg = fenv.pkg, task = git_checkout, arg = v, after = { "self:fetch" } })
+      local after = string.format("%s:fetch", fenv.pkg.name)
+      add_task(tasks, fenv.pkg.name, "unpack", { pkg = fenv.pkg, task = git_checkout, arg = v, after = { after } })
     end
   end
 
@@ -185,15 +186,27 @@ function main()
   INFO("construir: a custom linux distribution of your needs")
   local target = arg[2]
   local tasks = parse(target)
-
-  for k, queues in pairs(tasks or {}) do
-    for _, v in pairs(queues) do
-      if k:gsub("(.*):(.*)", "%2") == "fetch" then v.task(v) end
+  local amount = function(t)
+    local amount = 0
+    for k, v in pairs(t) do
+      amount = amount + 1
     end
+    return amount
   end
-  for k, queues in pairs(tasks or {}) do
-    for _, v in pairs(queues) do
-      if k:gsub("(.*):(.*)", "%2") == "unpack" then v.task(v) end
+
+  while amount(tasks) > 0 do
+    for k, queue in pairs(tasks or {}) do
+      for i, v in pairs(queue or {}) do
+        local ack = true
+        for _, dep in pairs(v.after or {}) do
+          if queue[dep] then ack = false end
+        end
+        if ack then
+          v.task(v)
+          tasks[k][i] = nil
+          if amount(tasks[k]) == 0 then tasks[k] = nil end
+        end
+      end
     end
   end
 end
