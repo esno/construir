@@ -28,13 +28,12 @@ local install = function(path, mode)
   local m = tonumber(mode, 8)
   local p = path:sub(1, 1) == "/" and "/" or ""
 
+  local enoent = { type = "-" }
   for ent in path:gmatch("([^/]+)") do
     p = string.format("%s%s/", p, ent)
-    f = p:sub(1, p:len() - 1)
-    if (stat(f) or { type = "-" })["type"] == "-" then
-      if mkdir(f, m) == -1 then
-        return nil, f
-      end
+    local f = p:sub(1, p:len() - 1)
+    if (stat(f) or enoent)["type"] == "-" and mkdir(f, m) == -1 then
+      return nil, f
     end
   end
   return true
