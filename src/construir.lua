@@ -65,7 +65,7 @@ local run = function(cmd)
       close(fds.stderr.write)
 
       local status = waitpid(pid);
-      return fds.stdout.read, fds.stderr.read
+      return status, fds.stdout.read, fds.stderr.read
     end
   end
 end
@@ -84,16 +84,16 @@ local git_checkout = function(task)
     task.pkg.name, task.pkg.version, remote, task.arg.rev))
 
   install(S, "0755")
-  local stdout, stderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s",
+  local status, stdout, stderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s",
     gitdir, S, task.arg.rev))
 
   local output = fdopen(stdout, "r"):read("a*")
-  if output ~= "" then
+  if status ~= 0 and output ~= "" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstdout\27[0m", task.pkg.name, task.pkg.version))
     print(output:gsub("\n$", ""))
   end
   local output = fdopen(stderr, "r"):read("a*")
-  if output ~= "" then
+  if status ~= 0 and output ~= "" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstderr\27[0m", task.pkg.name, task.pkg.version))
     print(output:gsub("\n$", ""))
   end
@@ -113,15 +113,15 @@ local git_clone = function(task)
     cmd = string.format("git clone --bare --mirror %s %s", task.arg.remote, gitdir)
   end
 
-  local stdout, stderr = run(cmd)
+  local status, stdout, stderr = run(cmd)
 
   local output = fdopen(stdout, "r"):read("a*")
-  if output ~= "" then
+  if status ~= 0 and output ~= "" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m print stdout\27[0m", task.pkg.name, task.pkg.version))
     print(output:gsub("\n$", ""))
   end
   local output = fdopen(stderr, "r"):read("a*")
-  if output ~= "" then
+  if status ~= 0 and output ~= "" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m print stderr\27[0m", task.pkg.name, task.pkg.version))
     print(output:gsub("\n$", ""))
   end
@@ -198,7 +198,7 @@ function main()
       for i, v in pairs(queue or {}) do
         local ack = true
         for _, dep in pairs(v.after or {}) do
-          if queue[dep] then ack = false end
+          if tasks[dep] then ack = false end
         end
         if ack then
           v.task(v)
