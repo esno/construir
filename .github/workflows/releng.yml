@@ -1,0 +1,32 @@
+name: releng
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    name: build
+    steps:
+      - name: checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: compile fiddle
+        run: |
+          sudo apt-get install -y lua5.4-dev
+
+      - name: compile fiddle
+        run: |
+          cmake ./fiddle -B ./build/fdl -DCMAKE_INSTALL_PREFIX=./build/image
+          make -C ./build/fdl
+          make -C ./build/fdl install
+
+      - name: install construir
+        run: |
+          cmake ./ -B ./build/construir -DCMAKE_INSTALL_PREFIX=./build/image
+          make -C ./build/construir
+          make -C ./build/construir install
