@@ -1,3 +1,6 @@
 [submodule "fiddle"]
 	path = fiddle
 	url = git@github.com:esno/fiddle.git
+[submodule "frickle"]
+	path = frickle
+	url = git@github.com:esno/frickle.git

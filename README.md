@@ -9,31 +9,17 @@
 
     git clone --recurse-submodules git@github.com:esno/construir.git
 
-    cmake -B ./build/fiddle ./fiddle -DCMAKE_INSTALL_PREFIX=./build/image -DWITH_JOURNALD=0; make -C ./build/fiddle; make -C ./build/fiddle install
-    cmake -B ./build/construir ./ -DCMAKE_INSTALL_PREFIX=./build/image && make -C ./build/construir && make -C ./build/construir install
+    cd ./construir
+    ./build.sh
 
 # usage
 
-## recipe sample
-
-    cat $CONSTRUIR_AQUI/recipes/binutils.lua
-    pkg.name = "binutils"
-    pkg.version = "2.43.1"
-
-    pkg.scm = {
-      git = {{
-        remote = "git://sourceware.org/git/binutils-gdb.git",
-        rev = string.format("%s-%s_%s_%s", pkg.name, pkg.major, pkg.minor, pkg.patch)
-      }}
-    }
-
-    pkg.configure = function()
-
-    end
+frickle will be a reference linux distribution of construir.
+it is available as submodule in [frickle](https://github.com/esno/frickle)
 
 ## build a recipe
 
-    export CONSTRUIR_AQUI="$(pwd)/lfs"
+    export CONSTRUIR_AQUI="$(pwd)/frickle"
     ./build/image/libexec/construir binutils
     == construir: a custom linux distribution of your needs
     -> binutils parse recipe
