@@ -5,23 +5,23 @@ lfs = {
 }
 
 local DEBUG = function(msg)
-  _debug('\27[0m-> ' .. msg .. '\27[0m')
+  fprintf(stdout, "\27[0m-> " .. msg .. "\27[0m\n")
 end
 
 local MSG = function(msg)
-  _info('\27[0m** ' .. msg .. '\27[0m')
+  fprintf(stdout, "\27[0m** " .. msg .. "\27[0m\n")
 end
 
 local INFO = function(msg)
-  _info('\27[1;37m== ' .. msg .. '\27[0m')
+  fprintf(stdout, "\27[1;37m== " .. msg .. "\27[0m\n")
 end
 
 local ERROR = function(msg)
-  _error('\27[0;31m--\27[0m ' .. msg)
+  fprintf(stderr, "\27[0;31m--\27[0m " .. msg .. "\n")
 end
 
 local SUCCESS = function(msg)
-  _notice('\27[0;32m++\27[0m ' .. msg)
+  fprintf(stdout, "\27[0;32m++\27[0m " .. msg .. "\n")
 end
 
 local install = function(path, mode)
