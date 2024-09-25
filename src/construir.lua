@@ -39,7 +39,7 @@ local install = function(path, mode)
   return true
 end
 
-local run = function(cmd)
+local run = function(cmd, task)
   local fds = { stdin = {}, stdout = {}, stderr = {} }
   fds.stdin.read, fds.stdin.write = pipe()
   fds.stdout.read, fds.stdout.write = pipe()
@@ -57,7 +57,12 @@ local run = function(cmd)
       dup2(fds.stdout.write, 1)
       dup2(fds.stderr.write, 2)
 
-      execvp(cmd);
+      local success, errno, strerrno = execvp(cmd)
+      if not success then
+        print(string.format("\27[0;31m%s\27[0m", cmd));
+        print(string.format("\27[0m%s (%d)", strerrno, errno))
+        os.exit(1)
+      end
     else
       -- parent
       close(fds.stdin.read)
@@ -65,6 +70,21 @@ local run = function(cmd)
       close(fds.stderr.write)
 
       local status = waitpid(pid);
+      if status ~= 0 then
+        local output = fdopen(fds.stdout.read, "r"):read("a*")
+        if output ~= "" then
+          DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstdout\27[0m", task.pkg.name, task.pkg.version))
+          print(output:gsub("\n$", ""))
+        end
+        local output = fdopen(fds.stderr.read, "r"):read("a*")
+        if output ~= "" then
+          ERROR(string.format("\27[0;33m%s/%s\27[0m print \27[0;31mstderr\27[0m", task.pkg.name, task.pkg.version))
+          print(output:gsub("\n$", ""))
+        end
+
+        os.exit(status)
+      end
+
       return status, fds.stdout.read, fds.stderr.read
     end
   end
@@ -73,6 +93,19 @@ end
 local semver = function(self)
   local v = self.version:gmatch("[^.%s]+")
   return v(), v(), v()
+end
+
+local do_table = function(task)
+  local W = string.format("%s/%s", lfs.build, task.pkg.name)
+  chdir(W)
+
+  MSG(string.format("\27[0;33m%s/%s\27[0m prepare \27\27[0m",
+    task.pkg.name, task.pkg.version, remote))
+
+  for k, v in pairs(task.arg or {}) do
+    local status, pstdout, pstderr = run(v, task)
+    if status ~= 0 then return status end
+  end
 end
 
 local git_checkout = function(task)
@@ -84,19 +117,9 @@ local git_checkout = function(task)
     task.pkg.name, task.pkg.version, remote, task.arg.rev))
 
   install(S, "0755")
-  local status, stdout, stderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s",
-    gitdir, S, task.arg.rev))
-
-  local output = fdopen(stdout, "r"):read("a*")
-  if status ~= 0 and output ~= "" then
-    DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstdout\27[0m", task.pkg.name, task.pkg.version))
-    print(output:gsub("\n$", ""))
-  end
-  local output = fdopen(stderr, "r"):read("a*")
-  if status ~= 0 and output ~= "" then
-    DEBUG(string.format("\27[0;33m%s/%s\27[0m print \27[0;34mstderr\27[0m", task.pkg.name, task.pkg.version))
-    print(output:gsub("\n$", ""))
-  end
+  local status, pstdout, pstderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s",
+    gitdir, S, task.arg.rev), task)
+  return status
 end
 
 local git_clone = function(task)
@@ -113,18 +136,8 @@ local git_clone = function(task)
     cmd = string.format("git clone --bare --mirror %s %s", task.arg.remote, gitdir)
   end
 
-  local status, stdout, stderr = run(cmd)
-
-  local output = fdopen(stdout, "r"):read("a*")
-  if status ~= 0 and output ~= "" then
-    DEBUG(string.format("\27[0;33m%s/%s\27[0m print stdout\27[0m", task.pkg.name, task.pkg.version))
-    print(output:gsub("\n$", ""))
-  end
-  local output = fdopen(stderr, "r"):read("a*")
-  if status ~= 0 and output ~= "" then
-    DEBUG(string.format("\27[0;33m%s/%s\27[0m print stderr\27[0m", task.pkg.name, task.pkg.version))
-    print(output:gsub("\n$", ""))
-  end
+  local status, pstdout, pstderr = run(cmd, task)
+  return status
 end
 
 local add_task = function(tasks, name, action, task)
@@ -170,6 +183,12 @@ local parse = function(target)
       local after = string.format("%s:fetch", fenv.pkg.name)
       add_task(tasks, fenv.pkg.name, "unpack", { pkg = fenv.pkg, task = git_checkout, arg = v, after = { after } })
     end
+  end
+
+  if type(fenv.pkg.prepare) == "table" then
+    DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mprepare\27[0m", fenv.pkg.name, fenv.pkg.version))
+    local after = string.format("%s:unpack", fenv.pkg.name)
+    add_task(tasks, fenv.pkg.name, "prepare", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.prepare, after = { after } })
   end
 
   return tasks
