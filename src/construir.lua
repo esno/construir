@@ -127,6 +127,16 @@ local do_table = function(task)
   end
 end
 
+local do_package = function(task)
+  MSG(string.format("\27[0;33m%s/%s\27[0m package\27[0m",
+    task.pkg.name, task.pkg.version))
+
+  install(lfs.pkg, "0755")
+  local status, pstdout, pstderr = run(string.format("tar cJpf %s/%s-%s.tar.xz -C %s .",
+    lfs.pkg, task.pkg.name, task.pkg.version, D), task)
+  return status
+end
+
 local git_checkout = function(task)
   local remote = task.arg.remote:gsub("(.*[/:])(.*)", "%2")
   local gitdir = string.format("%s/git/%s", lfs.downloads, task.arg.remote:gsub("[:@/]", "_"))
@@ -234,6 +244,10 @@ local parse = function(target)
     add_task(tasks, fenv.pkg.name, "install", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.install, fenv = fenv, after = { after } })
   end
 
+  DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mpackage\27[0m", fenv.pkg.name, fenv.pkg.version))
+  local after = string.format("%s:install", fenv.pkg.name)
+  add_task(tasks, fenv.pkg.name, "package", { pkg = fenv.pkg, task = do_package, arg = fenv.pkg.split, fenv = fenv, after = { after } })
+
   return tasks
 end
 
@@ -243,6 +257,7 @@ function main()
   lfs.recipes = lfs.recipes or string.format("%s/recipes", lfs.root)
   lfs.downloads = lfs.downloads or string.format("%s/dl", lfs.root)
   lfs.build = lfs.build or string.format("%s/build", lfs.root)
+  lfs.pkg = lfs.pkg or string.format("%s/pkg", lfs.root)
 
   INFO("construir: a custom linux distribution of your needs")
   local target = arg[2]
@@ -255,6 +270,7 @@ function main()
     return amount
   end
 
+  nftw(lfs.build, remove, 10, FTW_DEPTH | FTW_PHYS)
   while amount(tasks) > 0 do
     for k, queue in pairs(tasks or {}) do
       for i, v in pairs(queue or {}) do
