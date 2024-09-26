@@ -140,7 +140,7 @@ end
 local git_checkout = function(task)
   local remote = task.arg.remote:gsub("(.*[/:])(.*)", "%2")
   local gitdir = string.format("%s/git/%s", lfs.downloads, task.arg.remote:gsub("[:@/]", "_"))
-  local S = string.format("%s/%s/%s", lfs.build, task.pkg.name, remote:gsub(".git$", ""))
+  local S = task.arg.dir or string.format("%s/%s/%s", lfs.build, task.pkg.name, remote:gsub(".git$", ""))
 
   MSG(string.format("\27[0;33m%s/%s\27[0m unpack \27[0;34m%s -> %s\27[0m",
     task.pkg.name, task.pkg.version, remote, task.arg.rev))
@@ -176,6 +176,8 @@ local add_task = function(tasks, name, action, task)
   table.insert(tasks[key], task)
   return tasks
 end
+
+local do_noop = function() end
 
 local parse = function(target)
   local fenv = { pkg = {} }
@@ -226,22 +228,28 @@ local parse = function(target)
     end
   end
 
+  local after = string.format("%s:unpack", fenv.pkg.name)
   if type(fenv.pkg.prepare) == "table" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mprepare\27[0m", fenv.pkg.name, fenv.pkg.version))
-    local after = string.format("%s:unpack", fenv.pkg.name)
     add_task(tasks, fenv.pkg.name, "prepare", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.prepare, fenv = fenv, after = { after } })
+  else
+    add_task(tasks, fenv.pkg.name, "prepare", { pkg = fenv.pkg, task = do_noop, fenv = fenv, after = { after } })
   end
 
+  local after = string.format("%s:prepare", fenv.pkg.name)
   if type(fenv.pkg.build) == "table" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mbuild\27[0m", fenv.pkg.name, fenv.pkg.version))
-    local after = string.format("%s:prepare", fenv.pkg.name)
     add_task(tasks, fenv.pkg.name, "build", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.build, fenv = fenv, after = { after } })
+  else
+    add_task(tasks, fenv.pkg.name, "build", { pkg = fenv.pkg, task = do_noop, fenv = fenv, after = { after } })
   end
 
+  local after = string.format("%s:build", fenv.pkg.name)
   if type(fenv.pkg.install) == "table" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34minstall\27[0m", fenv.pkg.name, fenv.pkg.version))
-    local after = string.format("%s:build", fenv.pkg.name)
     add_task(tasks, fenv.pkg.name, "install", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.install, fenv = fenv, after = { after } })
+  else
+    add_task(tasks, fenv.pkg.name, "install", { pkg = fenv.pkg, task = do_noop, fenv = fenv, after = { after } })
   end
 
   DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mpackage\27[0m", fenv.pkg.name, fenv.pkg.version))
@@ -289,6 +297,7 @@ function main()
           install(L, "0755")
           v.task(v)
           _ENV = _G
+          DEBUG(string.format("\27[0;33m%s/%s\27[0m remove task \27[0;34m%s[%s]\27[0m", v.fenv.pkg.name, v.fenv.pkg.version, k, i))
           tasks[k][i] = nil
           if amount(tasks[k]) == 0 then tasks[k] = nil end
         end
