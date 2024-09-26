@@ -1,7 +1,11 @@
 #!@@BINDIR@@/fiddle
 
 lfs = {
-  root = os.getenv("CONSTRUIR_AQUI") or "."
+  root = os.getenv("CONSTRUIR_AQUI") or ".",
+  cc = {
+    amd64 = "x86_64-linux-gnu",
+    arm = "arm-linux-gnueabihf"
+  }
 }
 
 local DEBUG = function(msg)
@@ -53,14 +57,26 @@ local run = function(cmd, task)
       close(fds.stdout.read)
       close(fds.stderr.read)
 
+      local lstdout = io.open(string.format("%s/%s.stdout", L, task.action), "a")
+      local lstderr = io.open(string.format("%s/%s.stderr", L, task.action), "a")
+
       dup2(fds.stdin.read, 0)
+      dup2(fileno(lstdout), 1)
+      dup2(fileno(lstderr), 2)
+
+      local success, errno, strerrno = execvp(cmd)
+      lstdout:close()
+      lstderr:close()
+
       dup2(fds.stdout.write, 1)
       dup2(fds.stderr.write, 2)
 
-      local success, errno, strerrno = execvp(cmd)
       if not success then
         print(string.format("\27[0;31m%s\27[0m", cmd));
         print(string.format("\27[0m%s (%d)", strerrno, errno))
+        close(fds.stdin.read)
+        close(fds.stdout.write)
+        close(fds.stderr.write)
         os.exit(1)
       end
     else
@@ -82,6 +98,10 @@ local run = function(cmd, task)
           print(output:gsub("\n$", ""))
         end
 
+        close(fds.stdin.write)
+        close(fds.stdout.read)
+        close(fds.stderr.read)
+
         os.exit(status)
       end
 
@@ -96,11 +116,10 @@ local semver = function(self)
 end
 
 local do_table = function(task)
-  local W = string.format("%s/%s", lfs.build, task.pkg.name)
-  chdir(W)
+  chdir(S)
 
-  MSG(string.format("\27[0;33m%s/%s\27[0m prepare \27\27[0m",
-    task.pkg.name, task.pkg.version, remote))
+  MSG(string.format("\27[0;33m%s/%s\27[0m %s \27\27[0m",
+    task.pkg.name, task.pkg.version, task.action, remote))
 
   for k, v in pairs(task.arg or {}) do
     local status, pstdout, pstderr = run(v, task)
@@ -111,13 +130,13 @@ end
 local git_checkout = function(task)
   local remote = task.arg.remote:gsub("(.*[/:])(.*)", "%2")
   local gitdir = string.format("%s/git/%s", lfs.downloads, task.arg.remote:gsub("[:@/]", "_"))
-  local S = string.format("%s/%s/%s", lfs.build, task.pkg.name, remote)
+  local S = string.format("%s/%s/%s", lfs.build, task.pkg.name, remote:gsub(".git$", ""))
 
   MSG(string.format("\27[0;33m%s/%s\27[0m unpack \27[0;34m%s -> %s\27[0m",
     task.pkg.name, task.pkg.version, remote, task.arg.rev))
 
   install(S, "0755")
-  local status, pstdout, pstderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s",
+  local status, pstdout, pstderr = run(string.format("git --git-dir=%s --work-tree=%s checkout %s -f",
     gitdir, S, task.arg.rev), task)
   return status
 end
@@ -133,7 +152,7 @@ local git_clone = function(task)
   if (stat(gitdir) or { type = "-" })["type"] == "d" then
     cmd = string.format("git --git-dir=%s fetch origin --tags --prune --prune-tags", gitdir)
   else
-    cmd = string.format("git clone --bare --mirror %s %s", task.arg.remote, gitdir)
+    cmd = string.format("git clone --quiet --bare --mirror %s %s", task.arg.remote, gitdir)
   end
 
   local status, pstdout, pstderr = run(cmd, task)
@@ -143,6 +162,7 @@ end
 local add_task = function(tasks, name, action, task)
   local key = string.format("%s:%s", name, action)
   tasks[key] = tasks[key] or {}
+  task.action = action
   table.insert(tasks[key], task)
   return tasks
 end
@@ -163,6 +183,17 @@ local parse = function(target)
       if type(meta[key]) == "function" then return meta[key](self) end
     end
   })
+
+  W = string.format("%s/%s", lfs.build, target)
+  S = string.format("%s/%s", W, target)
+  D = string.format("%s/image", W)
+  L = string.format("%s/logs", W)
+
+  cc = {
+    build = lfs.cc.amd64,
+    host = lfs.cc.amd64,
+    target = lfs.cc.amd64
+  }
   _ENV = _G
 
   local recipe, errmsg = loadfile(string.format("%s/%s.lua", lfs.recipes, target), "t", fenv)
@@ -177,18 +208,30 @@ local parse = function(target)
   if fenv.pkg.scm then
     for _, v in pairs(fenv.pkg.scm.git or {}) do
       DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mgit_clone %s\27[0m", fenv.pkg.name, fenv.pkg.version, v.remote))
-      add_task(tasks, fenv.pkg.name, "fetch", { pkg = fenv.pkg, task = git_clone, arg = v })
+      add_task(tasks, fenv.pkg.name, "fetch", { pkg = fenv.pkg, task = git_clone, arg = v, fenv = fenv })
       DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mgit_checkout %s -> %s\27[0m",
         fenv.pkg.name, fenv.pkg.version, v.remote:gsub("(.*[/:])(.*)", "%2"), v.rev))
       local after = string.format("%s:fetch", fenv.pkg.name)
-      add_task(tasks, fenv.pkg.name, "unpack", { pkg = fenv.pkg, task = git_checkout, arg = v, after = { after } })
+      add_task(tasks, fenv.pkg.name, "unpack", { pkg = fenv.pkg, task = git_checkout, arg = v, fenv = fenv, after = { after } })
     end
   end
 
   if type(fenv.pkg.prepare) == "table" then
     DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mprepare\27[0m", fenv.pkg.name, fenv.pkg.version))
     local after = string.format("%s:unpack", fenv.pkg.name)
-    add_task(tasks, fenv.pkg.name, "prepare", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.prepare, after = { after } })
+    add_task(tasks, fenv.pkg.name, "prepare", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.prepare, fenv = fenv, after = { after } })
+  end
+
+  if type(fenv.pkg.build) == "table" then
+    DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34mbuild\27[0m", fenv.pkg.name, fenv.pkg.version))
+    local after = string.format("%s:prepare", fenv.pkg.name)
+    add_task(tasks, fenv.pkg.name, "build", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.build, fenv = fenv, after = { after } })
+  end
+
+  if type(fenv.pkg.install) == "table" then
+    DEBUG(string.format("\27[0;33m%s/%s\27[0m add task \27[0;34minstall\27[0m", fenv.pkg.name, fenv.pkg.version))
+    local after = string.format("%s:build", fenv.pkg.name)
+    add_task(tasks, fenv.pkg.name, "install", { pkg = fenv.pkg, task = do_table, arg = fenv.pkg.install, fenv = fenv, after = { after } })
   end
 
   return tasks
@@ -220,7 +263,10 @@ function main()
           if tasks[dep] then ack = false end
         end
         if ack then
+          _ENV = v.fenv
+          install(L, "0755")
           v.task(v)
+          _ENV = _G
           tasks[k][i] = nil
           if amount(tasks[k]) == 0 then tasks[k] = nil end
         end
