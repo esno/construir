@@ -30,3 +30,8 @@ jobs:
           cmake ./ -B ./build/construir -DCMAKE_INSTALL_PREFIX=./build/image
           make -C ./build/construir
           make -C ./build/construir install
+
+      - name: build recipes
+        run: |
+          export CONSTRUIR_AQUI="$(pwd)/frickle"
+          ./build/image/libexec/construir binutils

@@ -253,7 +253,13 @@ end
 
 function main()
   setloglvl(20)
-  dofile(string.format("%s/conf/construir.lua", lfs.root))
+
+  local conf = string.format("%s/conf/construir.lua", lfs.root)
+  local enoent = { type = "-" }
+  if (stat(conf) or enoent)["type"] == "f" then
+    dofile(conf)
+  end
+
   lfs.recipes = lfs.recipes or string.format("%s/recipes", lfs.root)
   lfs.downloads = lfs.downloads or string.format("%s/dl", lfs.root)
   lfs.build = lfs.build or string.format("%s/build", lfs.root)
